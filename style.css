@@ -1,0 +1,65 @@
+/* Dark Mode Styles */
+body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #121212;
+    color: #ffffff;
+}
+
+.tabs {
+    display: flex;
+    margin-bottom: 20px;
+}
+
+.tab {
+    display: flex;
+    padding: 10px;
+    margin-right: 10px;
+    background-color: #333;
+    border: 1px solid #555;
+    color: #ffffff;
+    cursor: pointer;
+}
+
+.tab.active {
+    background-color: #444;
+    font-weight: bold;
+}
+
+#tabs-container {
+    display: flex;
+    justify-content: center;
+    padding: 10px;
+}
+
+.table-wrapper {
+    max-height: 70vh; /* Adjust the height as needed */
+    overflow-y: auto;
+    margin-bottom: 20px;
+    border: 1px solid #555;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 10px;
+    text-align: left;
+    border-bottom: 1px solid #555;
+}
+
+th {
+    background-color: #333;
+    color: #ffffff;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    border-bottom: 2px solid #555;
+}
+
+.row-highlight {
+    background-color: #231616;
+    color: white;
+}
