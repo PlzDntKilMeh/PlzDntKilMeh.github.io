@@ -133,10 +133,11 @@ function createTable(table, data) {
                 cell.innerText = item[header];
             }
         });
+    });
         document.querySelectorAll("th").forEach(th => {
         if (th.innerText === "twitch") th.innerText = "source";
         if (th.innerText === "youtube") th.innerText = "clips";
-    });
 }
+
 
 
