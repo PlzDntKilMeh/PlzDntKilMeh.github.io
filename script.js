@@ -35,16 +35,16 @@ function createTabsAndTables(data) {
         tableWrapper.appendChild(table);
         contentContainer.appendChild(tableWrapper);
 
-        // Create elements to display kills and date
+        // Create elements to display kills and date (fixed unclosed span)
         const infoDiv = document.createElement('div');
         infoDiv.className = 'info-div';
         infoDiv.innerHTML = `
-            <p>Kills: <span id="${key}-Kills">${data[key]["kills_count"]}  <span id="${key}-date">${data[key]["last_update"]}</span></p>
+            <p>Kills: <span id="${key}-Kills">${data[key]["kills_count"]}</span> <span id="${key}-date">${data[key]["last_update"]}</span></p>
         `;
         infoDiv.style.display = firstTab ? 'block' : 'none';
         infoContainer.appendChild(infoDiv); // Append to the new container
 
-        createTable(table, data[key]["scoreboard"].sort((a, b) => b.break_taken - a.break_taken));
+        createTable(table, (data[key]["scoreboard"] || []).sort((a, b) => (b.break_taken || 0) - (a.break_taken || 0)));
 
         // Tab click event
         tab.addEventListener('click', () => {
@@ -68,7 +68,7 @@ function createTabsAndTables(data) {
 function createTable(table, data) {
     const thead = table.createTHead();
     const tbody = table.createTBody();
-    const headers = Object.keys(data[0]);
+    const headers = Object.keys(data[0] || {});
 
     // Create table headers
     const row = thead.insertRow();
@@ -80,7 +80,10 @@ function createTable(table, data) {
 
     headers.forEach(header => {
         const th = document.createElement('th');
-        th.innerText = header;
+        // rename at creation time
+        if (header === 'twitch') th.innerText = 'source';
+        else if (header === 'youtube') th.innerText = 'clips';
+        else th.innerText = header;
         row.appendChild(th);
     });
 
@@ -89,7 +92,7 @@ function createTable(table, data) {
         const row = tbody.insertRow();
 
         // Highlight the row if StillPlaying is true
-        if (item.StillPlaying === true) {
+        if (item && item.StillPlaying === true) {
             row.classList.add('row-highlight');
         }
 
@@ -101,43 +104,33 @@ function createTable(table, data) {
             const cell = row.insertCell();
 
             if (header === 'twitch') {
-                // Split Twitch links and display only the part after the last /
-                /*const links = item[header].map(link => {
-                    const splitLink = link.split('/'); // Split the link by /
-                    const displayText = splitLink[splitLink.length - 1]; // Get the last part (video ID with query params)
-                    return `<a href="${link}" target="_blank">${displayText}</a>`; // Use full link for href
+                // item[header] may contain twitch OR youtube links — show appropriate label
+                const links = (item[header] || []).map(link => {
+                    let displayText;
+                    if (typeof link === 'string' && link.includes("twitch.tv")) {
+                        displayText = "twitch";
+                    } else if (typeof link === 'string' && link.includes("youtube.com")) {
+                        displayText = "youtube";
+                    } else {
+                        displayText = link; 
+                    }
+                    return `<a href="${link}" target="_blank" rel="noopener noreferrer">${displayText}</a>`;
                 }).join('<br>'); // Use <br> for line breaks
-                cell.innerHTML = links; // Use innerHTML to allow clickable links*/
-                const links = item[header].map(link => {
-                let displayText;
-                if (link.includes("twitch.tv")) {
-                    displayText = "twitch";
-                } else if (link.includes("youtube.com")) {
-                    displayText = "youtube";
-                } else {
-                    displayText = link; 
-                }
-                return `<a href="${link}" target="_blank">${displayText}</a>`;
-            }).join('<br>'); // Use <br> for line breaks
             
-            cell.innerHTML = links; // clickable links
+                cell.innerHTML = links; // clickable links
 
             } else if (header === 'youtube') {
-                // Create clickable YouTube links
-                const youtubeLinks = item[header].map(dict => {
-                    const [filename, url] = Object.entries(dict)[0];
-                    return `<a href="${url}" target="_blank">${filename}</a>`;
+                // Create clickable YouTube links (array of dicts)
+                const youtubeLinks = (item[header] || []).map(dict => {
+                    const entry = Object.entries(dict || {})[0] || [];
+                    const filename = entry[0] || '';
+                    const url = entry[1] || '';
+                    return url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${filename}</a>` : '';
                 }).join('<br>');
                 cell.innerHTML = youtubeLinks; // Use innerHTML to allow clickable links
             } else {
-                cell.innerText = item[header];
+                cell.innerText = item[header] !== undefined ? item[header] : '';
             }
         });
     });
-        document.querySelectorAll("th").forEach(th => {
-        if (th.innerText === "twitch") th.innerText = "source";
-        if (th.innerText === "youtube") th.innerText = "clips";
 }
-
-
-
