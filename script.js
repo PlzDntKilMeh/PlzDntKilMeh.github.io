@@ -102,12 +102,25 @@ function createTable(table, data) {
 
             if (header === 'twitch') {
                 // Split Twitch links and display only the part after the last /
-                const links = item[header].map(link => {
+                /*const links = item[header].map(link => {
                     const splitLink = link.split('/'); // Split the link by /
                     const displayText = splitLink[splitLink.length - 1]; // Get the last part (video ID with query params)
                     return `<a href="${link}" target="_blank">${displayText}</a>`; // Use full link for href
                 }).join('<br>'); // Use <br> for line breaks
-                cell.innerHTML = links; // Use innerHTML to allow clickable links
+                cell.innerHTML = links; // Use innerHTML to allow clickable links*/
+                const links = item[header].map(link => {
+                let displayText;
+                if (link.includes("twitch.tv")) {
+                    displayText = "twitch";
+                } else if (link.includes("youtube.com")) {
+                    displayText = "youtube";
+                } else {
+                    displayText = link; 
+                }
+                return `<a href="${link}" target="_blank">${displayText}</a>`;
+            }).join('<br>'); // Use <br> for line breaks
+            
+            cell.innerHTML = links; // clickable links
 
             } else if (header === 'youtube') {
                 // Create clickable YouTube links
@@ -122,3 +135,4 @@ function createTable(table, data) {
         });
     });
 }
+
