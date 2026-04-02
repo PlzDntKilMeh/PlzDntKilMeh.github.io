@@ -21,7 +21,7 @@ document.addEventListener("DOMContentLoaded", function () {
         .then(data => {
             createTabsAndTables(data);
             createSqlTab('Kills', 'kill_v2_events');
-            createSqlTab('Groggy', 'groggy_events');
+            createSqlTab('Knocks', 'groggy_events');
         })
         .catch(error => console.error('Error loading JSON:', error));
 });
@@ -124,7 +124,7 @@ async function createSqlTab(tabLabel, tableName) {
 async function loadSQLiteDatabase(infoDiv, tableName) {
     const statusSpan = infoDiv.querySelector('span[id^="db-status"]');
     const loadingText = statusSpan || infoDiv;
-    loadingText.innerHTML = '<strong style="color:#ffaa00">Loading 33MB DB...</strong>';
+    loadingText.innerHTML = '<strong style="color:#ffaa00">Loading 49MB DB...</strong>';
 
     try {
         const config = {
@@ -148,19 +148,20 @@ async function loadSQLiteDatabase(infoDiv, tableName) {
 }
 
 function renderSqlTable(containerElement, tableName) {
-    const PAGE_SIZE = 500;
+    const PAGE_SIZE = 100;
     let currentFilters = {};
     let currentOffset = 0;
     let currentSort = 'event_time'; // Default sort
     let sortDirection = 'DESC';     // Default direction
+    let showRowNumbers = false;     // Default to hidden
 
     // === DEFAULT COLUMNS TO SHOW ===
     let defaultVisibleColumns;
     if (tableName === 'kill_v2_events') {
-        defaultVisibleColumns = new Set(['youtube_url', 'event_time', 'has_youtube', 'killer_name', 'victim_name','finisher_name', 'killerDamageInfo_damageCauserName']);
+        defaultVisibleColumns = new Set(['youtube_url', 'event_time', 'has_youtube', 'killer_name', 'victim_name','finisher_name']);
     } 
 	if(tableName === 'groggy_events'){
-		defaultVisibleColumns = new Set(['youtube_url', 'event_time', 'has_youtube', 'attacker_name', 'victim_name', 'killerDamageInfo_damageCauserName']);
+		defaultVisibleColumns = new Set(['youtube_url', 'event_time', 'has_youtube', 'attacker_name', 'victim_name',]);
 	}
 
     renderCurrentPage(containerElement, PAGE_SIZE, currentFilters, currentOffset, defaultVisibleColumns);
@@ -174,13 +175,71 @@ function renderSqlTable(containerElement, tableName) {
         container.innerHTML = `<p style="padding:20px; color:#00cc00;">Loading data...</p>`;
 
         try {
+            function sqlNormalizedTextExpr(columnName) {
+                // Normalize common “looks-like”/invisible characters that can make substring searches
+                // fail even when the rendered text appears to match.
+                // Note: this is applied only for filtering (already non-index-friendly due to %...% LIKE).
+                let expr = `COALESCE("${columnName}", '')`;
+                // Whitespace/control chars that sometimes sneak into ingested text
+                expr = `REPLACE(${expr}, char(9), ' ')`;     // tab
+                expr = `REPLACE(${expr}, char(10), ' ')`;    // LF
+                expr = `REPLACE(${expr}, char(13), ' ')`;    // CR
+                expr = `REPLACE(${expr}, char(160), ' ')`;   // NBSP
+                expr = `REPLACE(${expr}, char(8203), '')`;   // zero-width space
+                // Common confusable: Cyrillic 'Р/р' looks like Latin 'P/p'
+                expr = `REPLACE(${expr}, 'Р', 'P')`;
+                expr = `REPLACE(${expr}, 'р', 'p')`;
+                return expr;
+            }
+
+            const DAMAGE_TRANSLATION_COLS = new Set([
+                'damageCauserName',
+                'finishDamageInfo_damageCauserName',
+                'killerDamageInfo_damageCauserName',
+                'dBNODamageInfo_damageCauserName',
+            ]);
+
+            function buildFilterPredicate(col, filterValue) {
+                // Always support filtering by the raw DB value (case-insensitive).
+                const predicates = [`LOWER(${sqlNormalizedTextExpr(col)}) LIKE LOWER(?)`];
+                const predicateParams = [`%${filterValue}%`];
+
+                // If we have a translation dict, also allow filtering by the translated/friendly value,
+                // while still keeping the underlying data stored as the raw PUBG enum/id.
+                if (damageTranslationDict && DAMAGE_TRANSLATION_COLS.has(col)) {
+                    const needle = String(filterValue).toLowerCase();
+                    const matchingRawIds = [];
+
+                    // Find raw IDs whose friendly value matches the user's input.
+                    // Cap list size to avoid huge SQL IN(...) clauses.
+                    for (const rawId in damageTranslationDict) {
+                        const friendly = damageTranslationDict[rawId];
+                        if (!friendly) continue;
+                        if (String(friendly).toLowerCase().includes(needle)) {
+                            matchingRawIds.push(rawId);
+                            if (matchingRawIds.length >= 200) break;
+                        }
+                    }
+
+                    if (matchingRawIds.length > 0) {
+                        predicates.push(`"${col}" IN (${matchingRawIds.map(() => '?').join(',')})`);
+                        predicateParams.push(...matchingRawIds);
+                    }
+                }
+
+                return { sql: `(${predicates.join(' OR ')})`, params: predicateParams };
+            }
+
             // Build WHERE clause
             let whereClauses = [];
             let params = [];
             Object.keys(filters).forEach(col => {
                 if (filters[col]) {
-                    whereClauses.push(`"${col}" LIKE ?`);
-                    params.push(`%${filters[col]}%`);
+                    // Force case-insensitive filtering regardless of SQLite LIKE settings/build flags.
+                    // Also avoid NULLs turning the predicate into NULL (non-match).
+                    const predicate = buildFilterPredicate(col, filters[col]);
+                    whereClauses.push(predicate.sql);
+                    params.push(...predicate.params);
                 }
             });
             const whereSQL = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -204,79 +263,214 @@ function renderSqlTable(containerElement, tableName) {
             const hasPrevious = offset > 0;
             const hasMore = offset + rows.length < totalMatching;
 
-            // ==================== COLUMN SELECTOR (CHECKBOXES) ====================
-            let columnSelectorHTML = `
-                <div style="background:#1f1f1f; padding:15px; border-radius:8px; margin-bottom:15px;">
-                    <strong>Show Columns:</strong> 
-                    <button class="show-all-btn" style="margin-left:10px; padding:4px 10px; font-size:0.85em;">Show All</button>
-                    <button class="reset-cols-btn" style="margin-left:5px; padding:4px 10px; font-size:0.85em;">Reset to Default</button>
-                    <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:12px;">
-            `;
+            // ==================== COLUMN SELECTOR (SINGLE UNIFIED TABLE) ====================
+            // Determine which categories are relevant for this table
+            let rowLabels = ['Killer', 'Victim'];
+            if (tableName === 'kill_v2_events') {
+                rowLabels.push('Finisher', 'dBNOMaker');
+            }
+            
+            const suffixToCols = {}; 
+            const otherCols = [];
 
             allColumns.forEach(col => {
-                const isVisible = visibleColumns.has(col);
-                columnSelectorHTML += `
-                    <label style="display:flex; align-items:center; gap:5px; white-space:nowrap; font-size:0.9em;">
-                        <input type="checkbox" class="col-toggle" data-col="${col}" ${isVisible ? 'checked' : ''}>
-                        ${col}
-                    </label>
-                `;
+                let lower = col.toLowerCase();
+                let category = null;
+                let suffix = col;
+
+                if (lower.startsWith('killer_') || lower.startsWith('attacker_')) {
+                    category = 'Killer';
+                    suffix = col.replace(/^(killer|attacker)_/i, '');
+                } else if (lower.startsWith('victim_')) {
+                    category = 'Victim';
+                    suffix = col.replace(/^victim_/i, '');
+                } else if (lower.startsWith('finisher_') || lower.startsWith('finish_')) {
+                    category = 'Finisher';
+                    suffix = col.replace(/^(finisher|finish)_/i, '');
+                } else if (lower.startsWith('dbnomaker_')) {
+                    category = 'dBNOMaker';
+                    suffix = col.replace(/^dbnomaker_/i, '');
+                } else if (lower.includes('vehicle_')) {
+                    if (lower.startsWith('killer')) category = 'Killer';
+                    else if (lower.startsWith('victim')) category = 'Victim';
+                    suffix = col.split('_').slice(1).join('_'); 
+                } else if (lower.includes('damageinfo_')) {
+                    if (lower.startsWith('killer')) category = 'Killer';
+                    else if (lower.startsWith('finish')) category = 'Finisher';
+                    else if (lower.startsWith('dbno')) category = 'dBNOMaker';
+                    suffix = col.split('_').slice(1).join('_'); 
+                } else if (tableName === 'groggy_events') {
+                    const knownSuffixes = ['name', 'accountId', 'isInBlueZone', 'isInRedZone', 'isInVehicle', 'zone_json', 'damageReason', 'damageCauserName', 'distance', 'isThroughPenetrableWall'];
+                    if (knownSuffixes.includes(col)) {
+                        category = 'Killer';
+                        suffix = col;
+                    }
+                }
+
+                if (category) {
+                    if (!suffixToCols[suffix]) suffixToCols[suffix] = {};
+                    suffixToCols[suffix][category] = col;
+                } else {
+                    otherCols.push(col);
+                }
             });
-            columnSelectorHTML += `</div></div>`;
+
+            // Logical order for fields
+            const orderedSuffixes = [
+                'name', 'accountId', 'isInBlueZone', 'isInRedZone', 'isInVehicle', 'zone_json',
+                'vehicleId', 'isWheelsInAir', 'isInWaterVolume', 'velocity',
+                'damageReason', 'damageCauserName', 'distance', 'isThroughPenetrableWall', 'damageCauserAdditionalInfo_json'
+            ].filter(s => suffixToCols[s]);
+
+            // Add any other suffixes found that aren't in the ordered list
+            Object.keys(suffixToCols).forEach(s => {
+                if (!orderedSuffixes.includes(s)) orderedSuffixes.push(s);
+            });
+
+            const displayNames = {
+                'name': 'Name', 'accountId': 'ID', 'isInBlueZone': 'inBlue', 'isInRedZone': 'inRed', 'isInVehicle': 'inCar', 'zone_json': 'location',
+                'vehicleId': 'CarName', 'isWheelsInAir': 'CarInAir?', 'isInWaterVolume': 'CarInWater?', 'velocity': 'Speed',
+                'damageReason': 'dmgReason', 'damageCauserName': 'dmgCauser', 'distance': 'Dist', 'isThroughPenetrableWall': 'Wallbang', 'damageCauserAdditionalInfo_json': 'attachments'
+            };
+
+            let columnSelectorHTML = `
+                <div style="background:#1f1f1f; padding:3px 10px; border-radius:8px; margin-bottom:8px;">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px; flex-wrap:wrap;">
+                        <strong style="font-size:0.8em;">Filters:</strong> 
+                        <div style="display:flex; gap:3px;">
+                            <button class="show-all-btn" style="padding:0px 5px; font-size:0.75em; height:18px;">Show All</button>
+                            <button class="reset-cols-btn" style="padding:0px 5px; font-size:0.75em; height:18px;">Reset</button>
+                        </div>
+                        <label style="display:flex; align-items:center; gap:3px; font-size:0.75em; cursor:pointer; background:#333; padding:0px 5px; border-radius:3px; height:18px;">
+                            <input type="checkbox" id="toggle-row-nums" ${showRowNumbers ? 'checked' : ''} style="transform: scale(0.7); margin:0;">
+                            Row#
+                        </label>
+                    </div>
+
+                    <div class="column-selector-wrapper" style="padding:5px; margin-bottom:5px;">
+                        <table class="column-selector-table">
+                            <thead>
+                                <tr>
+                                    <th style="position: sticky; left: 0; z-index: 3;">Category</th>
+                                    ${orderedSuffixes.map(s => `<th>${displayNames[s] || s}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            rowLabels.forEach(cat => {
+                columnSelectorHTML += `<tr><td class="category-label">${cat}</td>`;
+                orderedSuffixes.forEach(s => {
+                    const colName = suffixToCols[s] ? suffixToCols[s][cat] : null;
+                    if (colName) {
+                        const isVisible = visibleColumns.has(colName);
+                        columnSelectorHTML += `
+                            <td>
+                                <input type="checkbox" class="col-toggle" data-col="${colName}" ${isVisible ? 'checked' : ''} style="cursor:pointer; transform:scale(0.85);">
+                            </td>`;
+                    } else {
+                        columnSelectorHTML += `<td>-</td>`;
+                    }
+                });
+                columnSelectorHTML += `</tr>`;
+            });
+
+            columnSelectorHTML += `</tbody></table></div>`;
+
+            if (otherCols.length > 0) {
+                columnSelectorHTML += `<div class="other-cols-group" style="margin-top:0; padding-top:5px;">`;
+                otherCols.forEach(col => {
+                    const isVisible = visibleColumns.has(col);
+                    columnSelectorHTML += `
+                        <label style="display:flex; align-items:center; gap:4px; font-size:0.75em; cursor:pointer; background:#2a2a2a; padding:1px 6px; border-radius:3px;">
+                            <input type="checkbox" class="col-toggle" data-col="${col}" ${isVisible ? 'checked' : ''} style="transform:scale(0.8);">
+                            ${col}
+                        </label>`;
+                });
+                columnSelectorHTML += `</div>`;
+            }
+
+            columnSelectorHTML += `</div>`;
+
+            function getColWidth(col) {
+                if (col === 'youtube_url') return '70px';
+                if (col.includes('_json') || col.includes('AdditionalInfo')) return '200px';
+                if (col.includes('name')) return '120px';
+                if (col.startsWith('is') || col.includes('has_')) return '70px';
+                return '100px';
+            }
 
             // ==================== SCROLLABLE TABLE ====================
+            const rowNumStyle = showRowNumbers ? '' : 'display:none;';
             let tableHTML = `
-                <div style="max-height: 60vh; overflow-y: auto; border: 1px solid #333; border-radius: 6px;">
-                    <table class="sql-table" style="width:100%; border-collapse: collapse;">
+                <div style="max-height: 50vh; overflow: auto; border: 1px solid #333; border-radius: 6px;">
+                    <table class="sql-table">
                         <thead>
                             <tr>
-                                <th style="position: sticky; top: 0; background: #1a1a1a; z-index: 10; min-width:50px;">#</th>`;
+                                <th style="position: sticky; top: 0; left: 0; background: #1a1a1a; z-index: 20; width: 50px; min-width: 50px; ${rowNumStyle}">#</th>`;
 
             allColumns.forEach(col => {
                 const displayStyle = visibleColumns.has(col) ? '' : 'display:none;';
                 const sortIcon = currentSort === col ? (sortDirection === 'ASC' ? ' ▴' : ' ▾') : '';
+                const w = getColWidth(col);
+                
                 tableHTML += `
                     <th class="sortable-header" data-col="${col}" 
-                        style="position: sticky; top: 0; background: #1a1a1a; z-index: 10; cursor: pointer; user-select: none; ${displayStyle}">
+                        style="position: sticky; top: 0; background: #1a1a1a; z-index: 10; cursor: pointer; user-select: none; 
+                               width: ${w}; min-width: ${w}; max-width: ${w}; ${displayStyle}">
                         ${col}${sortIcon}
                     </th>`;
             });
             tableHTML += `</tr><tr>`;
 
             // Filter row
-            tableHTML += `<th style="position: sticky; top: 40px; background: #1a1a1a; z-index: 10;"></th>`;
+            tableHTML += `<th style="position: sticky; top: 40px; left: 0; background: #1a1a1a; z-index: 20; ${rowNumStyle}"></th>`;
             allColumns.forEach(col => {
                 const displayStyle = visibleColumns.has(col) ? '' : 'display:none;';
                 const val = filters[col] || '';
+                const w = getColWidth(col);
+
                 tableHTML += `
-                    <th style="position: sticky; top: 40px; background: #1a1a1a; z-index: 10; ${displayStyle}">
+                    <th style="position: sticky; top: 40px; background: #1a1a1a; z-index: 10; 
+                               width: ${w}; min-width: ${w}; max-width: ${w}; ${displayStyle}">
                         <input type="text" class="column-filter" placeholder="Filter ${col}" data-col="${col}" 
-                               value="${val}" style="width:100%; padding:6px; font-size:0.9em; border-radius:4px;">
+                               value="${val}" style="width:100%; padding:2px; font-size:0.8em; border-radius:4px;">
                     </th>`;
             });
             tableHTML += `</tr></thead><tbody>`;
 
             // Data rows
             rows.forEach((rowData, idx) => {
-                tableHTML += `<tr><td>${offset + idx + 1}</td>`;
+                tableHTML += `<tr style="cursor:pointer;"><td style="position: sticky; left:0; background: #1a1a1a; z-index: 5; ${rowNumStyle}">${offset + idx + 1}</td>`;
                 rowData.forEach((value, colIndex) => {
                     const colName = allColumns[colIndex];
                     const displayStyle = visibleColumns.has(colName) ? '' : 'display:none;';
                     let display = (value === null || value === undefined) ? '' : String(value);
 
-                    // Translate damage names if applicable
-                    if (damageTranslationDict && 
-                        (colName === 'damageCauserName' || 
-                         colName === 'finishDamageInfo_damageCauserName' || 
-                         colName === 'killerDamageInfo_damageCauserName')) {
-                        display = damageTranslationDict[display] || display;
+                    // --- SPECIAL FORMATTING ---
+                    if (colName === 'youtube_url' && display) {
+                        display = `<a href="${display}" target="_blank" rel="noopener noreferrer" style="color:#00aaff; text-decoration:underline;">youtube</a>`;
+                    } else {
+                        if (damageTranslationDict && DAMAGE_TRANSLATION_COLS.has(colName)) {
+                            const rawId = display;
+                            const friendly = damageTranslationDict[rawId];
+                            if (friendly && friendly !== rawId) {
+                                display = `${rawId} <span style="color:#888;">(${friendly})</span>`;
+                            }
+                        }
+
+                        display = display.replace(
+                            /(https?:\/\/[^\s<>"']+)/gi,
+                            '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#00aaff; text-decoration:underline;">$1</a>'
+                        );
                     }
 
-                    display = display.replace(
-                        /(https?:\/\/[^\s<>"']+)/gi,
-                        '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#00aaff; text-decoration:underline;">$1</a>'
-                    );
-                    tableHTML += `<td style="${displayStyle}">${display}</td>`;
+                    const w = getColWidth(colName);
+                    // Wrap content in a div with max-height to cap row vertical size
+                    tableHTML += `
+                        <td style="width: ${w}; min-width: ${w}; max-width: ${w}; ${displayStyle}">
+                            <div style="max-height: 50px; overflow-y: auto;">${display}</div>
+                        </td>`;
                 });
                 tableHTML += '</tr>';
             });
@@ -312,6 +506,20 @@ function renderSqlTable(containerElement, tableName) {
             }
 
             // ==================== EVENT LISTENERS ====================
+
+            // Row click highlighting
+            container.querySelectorAll('.sql-table tbody tr').forEach(row => {
+                row.addEventListener('click', () => {
+                    container.querySelectorAll('.sql-table tbody tr').forEach(r => r.classList.remove('selected'));
+                    row.classList.add('selected');
+                });
+            });
+
+            // Toggle row numbers
+            container.querySelector('#toggle-row-nums').addEventListener('change', (e) => {
+                showRowNumbers = e.target.checked;
+                renderCurrentPage(container, limit, filters, offset, visibleColumns);
+            });
 
             // Show All / Reset buttons
             container.querySelector('.show-all-btn').addEventListener('click', () => {

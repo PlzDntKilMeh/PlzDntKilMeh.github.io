@@ -69,6 +69,87 @@ th {
     background-color: #231616;
     color: white;
 }
+
+.sql-table {
+    table-layout: fixed;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.sql-table th, .sql-table td {
+    padding: 8px;
+    text-align: left;
+    border: 1px solid #333;
+    font-size: 0.85em;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    white-space: normal;
+}
+
+.sql-table th {
+    background-color: #1a1a1a;
+    color: #00aaff;
+    font-weight: bold;
+}
+
+.sql-table tr.selected {
+    background-color: #3e3e3e !important;
+}
+
+.sql-table tbody tr:hover {
+    background-color: #252525;
+}
+
+.column-selector-wrapper {
+    overflow-x: auto;
+    background: #1a1a1a;
+    border-radius: 8px;
+    border: 1px solid #333;
+    padding: 10px;
+    margin-bottom: 15px;
+}
+
+.column-selector-table {
+    border-collapse: collapse;
+    font-size: 0.8em;
+    width: max-content;
+    min-width: 100%;
+}
+
+.column-selector-table th, .column-selector-table td {
+    padding: 2px 6px;
+    border: 1px solid #333;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.column-selector-table th {
+    background: #252525;
+    color: #00aaff;
+    position: sticky;
+    top: 0;
+}
+
+.column-selector-table td.category-label {
+    background: #252525;
+    color: #fff;
+    font-weight: bold;
+    text-align: left;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+}
+
+.other-cols-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid #333;
+}
+
 .pagination-btn {
     background: #0066ff;
     color: white;
